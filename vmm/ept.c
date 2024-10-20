@@ -46,10 +46,27 @@ static inline int epte_present(epte_t epte)
 // Hint: Set the permissions of intermediate ept entries to __EPTE_FULL.
 //       The hardware ANDs the permissions at each level, so removing a permission
 //       bit at the last level entry is sufficient (and the bookkeeping is much simpler).
-static int ept_lookup_gpa(epte_t* eptrt, void *gpa,
-			  int create, epte_t **epte_out) {
+static int ept_lookup_gpa(epte_t* eptrt, void *gpa, int create, epte_t **epte_out) 
+{
+    uint64_t r;
     /* Your code here */
-    return 0;
+    if(eptrt == NULL)
+    	return -E_INVAL;
+
+    r = (uint64_t)pml4e_walk(eptrt, gpa, create);
+    if(r == -E_NO_ENT || r == -E_NO_MEM)
+    {
+		return r;
+    }
+    
+	if(epte_out != NULL)
+	{
+		*epte_out = (epte_t *)r;
+		return 0;
+	}
+	
+	return -E_INVAL;	   
+    //return 0;
 }
 
 void ept_gpa2hva(epte_t* eptrt, void *gpa, void **hva) {
@@ -125,8 +142,42 @@ int ept_page_insert(epte_t* eptrt, struct PageInfo* pp, void* gpa, int perm) {
 //       You should set the type to EPTE_TYPE_WB and set __EPTE_IPAT flag.
 int ept_map_hva2gpa(epte_t* eptrt, void* hva, void* gpa, int perm,
         int overwrite) {
-    /* Your code here */
-    return 0;
+	/* Your code here */
+	int r;
+    pte_t *guest = NULL;
+	pte_t *host = NULL;
+    struct Page *page = NULL;
+
+    if((perm & __EPTE_FULL) == 0)
+    {
+		return -E_INVAL;
+    }
+
+    physaddr_t host_address = PADDR(hva);
+
+    r = ept_lookup_gpa(eptrt, gpa, 1, (epte_t**) &(guest));
+
+	if(r == 0)
+	{
+		if(*guest && overwrite == 0 )
+		{
+	    	return -E_INVAL;
+		}
+		
+		if(*guest && overwrite == 1 )
+		{
+	    	*guest = (uint64_t)host_address | perm | __EPTE_IPAT;
+	    	return 0;
+		}
+		
+		if(*guest != 0)
+		{
+	    	*guest = (uint64_t)host_address | perm | __EPTE_IPAT;
+	    	return 0;
+		}
+	}
+    return r;
+    //return 0;
 }
 
 int ept_alloc_static(epte_t *eptrt, struct VmxGuestInfo *ginfo) {

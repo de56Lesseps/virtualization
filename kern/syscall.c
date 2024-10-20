@@ -450,10 +450,42 @@ sys_vmx_incr_vmdisk_number() {
 //       instead of the normal page table. 
 // 
 static int
-sys_ept_map(envid_t srcenvid, void *srcva,
-	    envid_t guest, void* guest_pa, int perm)
+sys_ept_map(envid_t srcenvid, void *srcva, envid_t guest, void* guest_pa, int perm)
 {
-    /* Your code here */
+
+	int r;
+	struct PageInfo *pi;
+	struct Env *es;
+	struct Env *ed;
+	pte_t *ppte;
+	pte_t * pident;
+	
+	int eserror = envid2env(srcenvid, &es, 1);
+	int ederror = envid2env(guest, &ed, 1);
+
+	if(eserror == 0 && ederror == 0)
+	{
+	    pi = page_lookup(es->env_pml4e, (void *)srcva, (pte_t **)&ppte);
+	    pident = page2kva(pi);
+	    r = ept_map_hva2gpa(ed->env_pml4e, (void *)pident, (void *)guest_pa, perm, 1);
+	}
+	else
+	{
+		return -E_BAD_ENV;
+	}
+	
+	if(r == 0)
+	{
+		pi = page_lookup(es->env_pml4e, (void *)srcva, (pte_t**)NULL);
+	    if(pi != NULL)
+			pi->pp_ref++;
+	    return 0;
+	}
+	else
+	{
+	    return r;
+	}
+
     return 0;
 }
 
