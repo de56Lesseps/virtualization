@@ -214,8 +214,21 @@ bool
 handle_cpuid(struct Trapframe *tf, struct VmxGuestInfo *ginfo)
 {
 	/* Your code here  */
-    panic("handle_cpuid is not impemented\n");
-    return false;
+    //panic("handle_cpuid is not impemented\n");
+	uint32_t eax, ebx, ecx, edx;
+    cpuid(tf->tf_regs.reg_rax, &eax, &ebx, &ecx, &edx );
+    
+    if(eax == 1)
+        ecx &= 0xFFFFFFEF;
+    
+    tf->tf_regs.reg_rax = (uint64_t)eax;
+    tf->tf_regs.reg_rbx = (uint64_t)ebx;
+    tf->tf_regs.reg_rcx = (uint64_t)ecx;
+    tf->tf_regs.reg_rdx = (uint64_t)edx;
+
+    tf->tf_rip += vmcs_read32(VMCS_32BIT_VMEXIT_INSTRUCTION_LENGTH);
+	    
+    return true;
 }
 
 // Handle vmcall traps from the guest.
@@ -239,6 +252,9 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 	uint32_t val;
 	// phys address of the multiboot map in the guest.
 	uint64_t multiboot_map_addr = 0x6000;
+	
+	memory_map_t memory_map[3];
+	
 	switch(tf->tf_regs.reg_rax) {
 	case VMX_VMCALL_MBMAP:
         /* Hint: */
@@ -252,6 +268,48 @@ handle_vmcall(struct Trapframe *tf, struct VmxGuestInfo *gInfo, uint64_t *eptrt)
 		// Copy the mbinfo and memory_map_t (segment descriptions) into the guest page, and return
 		//   a pointer to this region in rbx (as a guest physical address).
 		/* Your code here */
+		memory_map[0].size = sizeof(memory_map_t);
+	    memory_map[0].type = MB_TYPE_USABLE;
+		memory_map[0].length_low = 640*1024;
+	    memory_map[0].length_high = 0;
+	    memory_map[0].base_addr_low = 0;
+	    memory_map[0].base_addr_high = 0;
+
+	    memory_map[1].size = sizeof(memory_map_t);
+	    memory_map[1].type = MB_TYPE_RESERVED;
+		memory_map[1].length_low = 384*1024;
+	    memory_map[1].length_high = 0;
+	    memory_map[1].base_addr_low = 640*1024;
+	    memory_map[1].base_addr_high = 0;
+           
+	    memory_map[2].size = sizeof(memory_map_t);
+		memory_map[2].type = MB_TYPE_USABLE;
+	    memory_map[2].length_low = (uint32_t)(gInfo->phys_sz - 1024*1024);
+	    memory_map[2].length_high =(uint32_t)((gInfo->phys_sz - EXTPHYSMEM) >> 32);
+	    memory_map[2].base_addr_high = 0;
+
+	    mbinfo.flags = MB_FLAG_MMAP;
+	    mbinfo.mmap_length = sizeof(memory_map);
+	    mbinfo.mmap_addr =  multiboot_map_addr;
+
+		struct PageInfo *tmp_page = NULL;
+  		tmp_page = page_alloc(ALLOC_ZERO);
+	    if (tmp_page == NULL)
+			return false;
+	    
+	    tmp_page->pp_ref++;
+	    hva_pg = page2kva(tmp_page);
+
+		memcpy(hva_pg, &mbinfo, (size_t)sizeof(multiboot_info_t)); 
+		memcpy(((void *)hva_pg + sizeof(multiboot_info_t)), memory_map,sizeof(memory_map));
+
+		r = ept_map_hva2gpa((epte_t*) eptrt, hva_pg, (void *)multiboot_map_addr, __EPTE_FULL, 0);	
+	    if(r<0)
+			return false;
+
+		tf->tf_regs.reg_rbx = multiboot_map_addr;
+
+	    handled = true;
 		break;
 	case VMX_VMCALL_IPCSEND:
         /* Hint: */
